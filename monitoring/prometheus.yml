@@ -1,0 +1,7 @@
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: 'crypto-bot'
+    static_configs:
+      - targets: ['crypto-bot:5000']

@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Bot Test</title>
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    <style>
+        body { font-family: Arial; padding: 20px; }
+        .status { padding: 10px; margin: 10px 0; border-radius: 5px; }
+        .connected { background: #dfd; }
+        .disconnected { background: #fdd; }
+        .price { margin: 5px 0; padding: 5px; background: #eee; }
+    </style>
+</head>
+<body>
+    <h1>Crypto Trading Bot</h1>
+    <div id="status" class="status">Connecting...</div>
+    <div id="prices"></div>
+
+    <script>
+        const socket = io();
+
+        socket.on("connect", () => {
+            document.getElementById("status").className = "status connected";
+            document.getElementById("status").textContent = "Connected to bot";
+        });
+
+        socket.on("disconnect", () => {
+            document.getElementById("status").className = "status disconnected";
+            document.getElementById("status").textContent = "Disconnected";
+        });
+
+        socket.on("connection_response", (data) => {
+            const status = document.getElementById("status");
+            status.textContent = `Connected | Exchange: ${data.exchange ? '✅' : '❌'}`;
+            updatePrices(data.prices);
+        });
+
+        socket.on("price_update", (data) => {
+            updatePrices(data);
+        });
+
+        function updatePrices(data) {
+            document.getElementById("prices").innerHTML = `
+                <div class="price">
+                    BTC/AUD: $${data["BTC/AUD"].toFixed(2)}
+                    (Source: ${data.source} ${data.success ? '✅' : '⚠️'})
+                </div>
+                <div class="price">
+                    ETH/AUD: $${data["ETH/AUD"].toFixed(2)}
+                    (Source: ${data.source} ${data.success ? '✅' : '⚠️'})
+                </div>
+                <div>Last update: ${new Date(data.timestamp * 1000).toLocaleTimeString()}</div>
+            `;
+        }
+    </script>
+</body>
+</html>

@@ -1,0 +1,31 @@
+services:
+  - type: web
+    name: crypto-dream-bot
+    env: python
+    plan: starter
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn --worker-class eventlet --workers 1 --bind 0.0.0.0:$PORT main:app
+    autoDeploy: true
+    healthCheckPath: /api/balance
+    envVars:
+      - key: FLASK_DEBUG
+        value: "0"
+      - key: BOT_AUTO_TRADE_ENABLED
+        value: "true"
+      - key: PYTHONUNBUFFERED
+        value: "1"
+      - key: FLASK_SECRET_KEY
+        generateValue: true
+      - key: COINSPOT_API_KEY
+        sync: false
+      - key: COINSPOT_API_SECRET
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+
+    # Persist bot/manual order events across deploys/restarts.
+    # Requires a paid Render plan that supports persistent disks.
+    disk:
+      name: crypto-dream-data
+      mountPath: /opt/render/project/src/logs
+      sizeGB: 1

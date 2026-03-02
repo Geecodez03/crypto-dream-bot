@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Crypto Dream Trading Bot</title>
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' https://cdn.jsdelivr.net; script-src 'self' https://cdn.socket.io; img-src 'self' data:; connect-src 'self' ws: http: https:">
+    <meta http-equiv="X-Content-Type-Options" content="nosniff">
+    <link rel="stylesheet" href="/static/css/style.css">
+    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js" defer></script>
+    <script src="/static/js/main.js" defer></script>
+</head>
+<body>
+    <div class="app-shell">
+        <header class="topbar panel">
+            <div class="brand-wrap">
+                <img src="/static/images/crypto_dream$_bot.jpg" alt="Crypto Dream bot" class="brand-logo">
+                <div>
+                    <p class="eyebrow">Automated Trading</p>
+                    <h1>Crypto Dream Bot Dashboard</h1>
+                </div>
+            </div>
+            <div class="topbar-actions">
+                <div id="connection-status" class="status-pill status-waiting">Connecting...</div>
+                <button id="theme-toggle" class="btn btn-secondary" type="button">Toggle Theme</button>
+            </div>
+        </header>
+
+        <section class="price-strip panel" aria-label="Market overview">
+            <article class="metric-card">
+                <p class="metric-label">BTC / AUD</p>
+                <p id="price-btc" class="metric-value">--</p>
+                <p id="price-btc-meta" class="metric-meta">Waiting for feed</p>
+            </article>
+            <article class="metric-card">
+                <p class="metric-label">ETH / AUD</p>
+                <p id="price-eth" class="metric-value">--</p>
+                <p id="price-eth-meta" class="metric-meta">Waiting for feed</p>
+            </article>
+            <article class="metric-card">
+                <p class="metric-label">Portfolio (AUD)</p>
+                <p id="portfolio-total" class="metric-value">--</p>
+                <p id="portfolio-meta" class="metric-meta">Balance sync pending</p>
+            </article>
+            <article class="metric-card">
+                <p class="metric-label">Execution Mode</p>
+                <p id="mode-value" class="metric-value">DEMO</p>
+                <p class="metric-meta">Strict live-only from CoinSpot</p>
+            </article>
+        </section>
+
+        <main class="dashboard-grid">
+            <section class="panel chart-panel">
+                <div class="panel-head">
+                    <h2>Market Feed Charts</h2>
+                    <span class="panel-tag">CoinSpot Live Feed (Strict)</span>
+                </div>
+                <div class="chart-controls" role="group" aria-label="Chart range selector">
+                    <button class="range-btn active" data-range="1h" type="button">1H</button>
+                    <button class="range-btn" data-range="24h" type="button">24H</button>
+                    <button class="range-btn" data-range="1w" type="button">1W</button>
+                    <button class="range-btn" data-range="1m" type="button">1M</button>
+                    <button class="range-btn" data-range="1y" type="button">1Y</button>
+                    <button class="range-btn" data-range="all" type="button">ALL</button>
+                </div>
+                <div class="chart-grid">
+                    <div class="chart-frame">
+                        <p class="chart-title">BTC / AUD (CoinSpot)</p>
+                        <div id="tradingview-chart-btc" class="chart-surface"></div>
+                    </div>
+                    <div class="chart-frame">
+                        <p class="chart-title">ETH / AUD (CoinSpot)</p>
+                        <div id="tradingview-chart-eth" class="chart-surface"></div>
+                    </div>
+                    <div class="chart-frame">
+                        <p class="chart-title">SOL / AUD (CoinSpot)</p>
+                        <div id="tradingview-chart-sol" class="chart-surface"></div>
+                    </div>
+                </div>
+            </section>
+
+            <aside class="stack-col">
+                <section class="panel">
+                    <div class="panel-head">
+                        <h2>Portfolio Balances</h2>
+                        <span id="balance-source" class="panel-tag">Live Only</span>
+                    </div>
+                    <div class="table-wrap">
+                        <table id="balances-table">
+                            <thead>
+                                <tr>
+                                    <th>Asset</th>
+                                    <th class="ta-right">Amount</th>
+                                    <th class="ta-right">Value (AUD)</th>
+                                </tr>
+                            </thead>
+                            <tbody></tbody>
+                        </table>
+                    </div>
+                    <p id="total-value" class="table-total">Total Value: --</p>
+                </section>
+
+                <section class="panel">
+                    <div class="panel-head">
+                        <h2>Quick Trade</h2>
+                        <span class="panel-tag">Market Order</span>
+                    </div>
+                    <form id="order-form" class="trade-form">
+                        <label for="order-pair">Pair</label>
+                        <select id="order-pair" required>
+                            <option value="BTC/AUD">BTC/AUD</option>
+                            <option value="ETH/AUD">ETH/AUD</option>
+                        </select>
+
+                        <label for="order-amount">Amount</label>
+                        <input type="number" id="order-amount" min="0.0001" step="0.0001" placeholder="0.0100" required>
+
+                        <label for="order-side">Side</label>
+                        <select id="order-side" required>
+                            <option value="buy">Buy</option>
+                            <option value="sell">Sell</option>
+                        </select>
+
+                        <button type="submit" class="btn btn-primary">Place Order</button>
+                    </form>
+                    <div id="order-result" class="result-text"></div>
+                </section>
+
+                <section class="panel">
+                    <div class="panel-head">
+                        <h2>AI Trading Assistant</h2>
+                        <span class="panel-tag">Backend OpenAI</span>
+                    </div>
+                    <div class="ai-wrap">
+                        <label for="ai-prompt">Ask for strategy, risk, or market insights</label>
+                        <textarea id="ai-prompt" rows="4" placeholder="Example: Give me a conservative BTC/ETH rebalance idea for today."></textarea>
+                        <button id="ai-send" class="btn btn-primary" type="button">Ask AI</button>
+                        <div id="ai-response" class="ai-response">AI response will appear here.</div>
+                    </div>
+                </section>
+
+                <section class="panel activity-panel">
+                    <div class="panel-head">
+                        <h2>Session Activity</h2>
+                        <span class="panel-tag">Recent Events</span>
+                    </div>
+                    <ul id="activity-feed" class="activity-feed"></ul>
+                </section>
+
+                <section class="panel">
+                    <div class="panel-head">
+                        <h2>Live Order History</h2>
+                        <span id="orders-updated" class="panel-tag">Loading...</span>
+                    </div>
+                    <div class="table-wrap order-history-wrap">
+                        <table id="order-history-table" class="order-history-table">
+                            <thead>
+                                <tr>
+                                    <th>Time</th>
+                                    <th>Side</th>
+                                    <th>Market</th>
+                                    <th class="ta-right">Amount</th>
+                                    <th class="ta-right">Total (AUD)</th>
+                                    <th class="ta-right">Net AUD</th>
+                                    <th>Status</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr><td colspan="7">Loading order history...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </section>
+
+                <section class="panel news-panel">
+                    <div class="panel-head">
+                        <h2>Top Crypto Headlines</h2>
+                        <span id="news-updated" class="panel-tag">Loading...</span>
+                    </div>
+                    <ul id="news-feed" class="news-feed">
+                        <li>Loading latest crypto headlines...</li>
+                    </ul>
+                </section>
+            </aside>
+        </main>
+    </div>
+
+    <div id="notification" class="notification hidden" role="status" aria-live="polite"></div>
+</body>
+</html>
