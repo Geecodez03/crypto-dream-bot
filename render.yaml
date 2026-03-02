@@ -4,7 +4,7 @@ services:
     env: python
     plan: starter
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn --worker-class eventlet --workers 1 --bind 0.0.0.0:$PORT main:app
+    startCommand: gunicorn --worker-class gthread --threads 8 --workers 1 --timeout 120 --bind 0.0.0.0:$PORT main:app
     autoDeploy: true
     healthCheckPath: /
     envVars:
