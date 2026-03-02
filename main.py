@@ -99,7 +99,10 @@ def env_bool(name: str, default: bool = False) -> bool:
 
 
 BOT_AUTO_TRADE_ENABLED = env_bool("BOT_AUTO_TRADE_ENABLED", True)
-BOT_PAIR = os.getenv("BOT_PAIR", "BTC/AUD").upper()
+BOT_PAIRS = [item.strip().upper() for item in os.getenv("BOT_PAIRS", "BTC/AUD,ETH/AUD,SOL/AUD").split(",") if item.strip()]
+BOT_PAIR = os.getenv("BOT_PAIR", BOT_PAIRS[0] if BOT_PAIRS else "BTC/AUD").upper()
+if not BOT_PAIRS:
+    BOT_PAIRS = [BOT_PAIR]
 BOT_SHORT_WINDOW = int(os.getenv("BOT_SHORT_WINDOW", "4"))
 BOT_LONG_WINDOW = int(os.getenv("BOT_LONG_WINDOW", "12"))
 BOT_SIGNAL_BPS = float(os.getenv("BOT_SIGNAL_BPS", "8"))
@@ -109,9 +112,14 @@ BOT_TRADE_SIZE_AUD = float(os.getenv("TRADE_SIZE", "0") or 0)
 BOT_MAX_TICKS = 200
 
 bot_state: Dict[str, Any] = {
-    "ticks": [],
-    "position": "flat",
-    "last_action_ts": 0,
+    "pairs": {
+        pair: {
+            "ticks": [],
+            "position": "flat",
+            "last_action_ts": 0,
+        }
+        for pair in BOT_PAIRS
+    },
 }
 recent_order_events: deque[Dict[str, Any]] = deque(maxlen=120)
 ORDER_EVENTS_FILE = Path("logs/trades/order_events.jsonl")
@@ -209,7 +217,8 @@ def normalize_order_entry(entry: Dict[str, Any], fallback_market: str = "BTC/AUD
 
 
 def record_order_event(result: Dict[str, Any], source: str):
-    market = str(result.get("pair") or BOT_PAIR or "BTC/AUD").upper()
+    default_pair = BOT_PAIRS[0] if BOT_PAIRS else BOT_PAIR
+    market = str(result.get("pair") or default_pair or "BTC/AUD").upper()
     side = str(result.get("side") or "").lower()
     if side not in {"buy", "sell"}:
         side = "unknown"
@@ -339,59 +348,59 @@ def maybe_run_bot_strategy(prices: Dict[str, Union[float, str]]):
         emit_bot_status("waiting", "Skipping signal: CoinSpot live feed unavailable")
         return
 
-    latest_price = float(prices.get(BOT_PAIR, 0) or 0)
-    if latest_price <= 0:
-        emit_bot_status("waiting", f"Skipping signal: {BOT_PAIR} price unavailable")
-        return
+    for pair in BOT_PAIRS:
+        latest_price = float(prices.get(pair, 0) or 0)
+        if latest_price <= 0:
+            continue
 
-    ticks: list[float] = bot_state["ticks"]
-    ticks.append(latest_price)
-    if len(ticks) > BOT_MAX_TICKS:
-        ticks.pop(0)
+        pair_state = bot_state["pairs"].setdefault(pair, {"ticks": [], "position": "flat", "last_action_ts": 0})
+        ticks: list[float] = pair_state["ticks"]
+        ticks.append(latest_price)
+        if len(ticks) > BOT_MAX_TICKS:
+            ticks.pop(0)
 
-    if len(ticks) < BOT_LONG_WINDOW:
-        emit_bot_status("warming", f"Collecting ticks {len(ticks)}/{BOT_LONG_WINDOW}")
-        return
+        if len(ticks) < BOT_LONG_WINDOW:
+            emit_bot_status("warming", f"{pair} collecting ticks {len(ticks)}/{BOT_LONG_WINDOW}")
+            continue
 
-    short_window = max(2, min(BOT_SHORT_WINDOW, BOT_LONG_WINDOW - 1))
-    short_ma = sum(ticks[-short_window:]) / short_window
-    long_ma = sum(ticks[-BOT_LONG_WINDOW:]) / BOT_LONG_WINDOW
-    diff_ratio = (short_ma - long_ma) / max(long_ma, 1e-9)
+        short_window = max(2, min(BOT_SHORT_WINDOW, BOT_LONG_WINDOW - 1))
+        short_ma = sum(ticks[-short_window:]) / short_window
+        long_ma = sum(ticks[-BOT_LONG_WINDOW:]) / BOT_LONG_WINDOW
+        diff_ratio = (short_ma - long_ma) / max(long_ma, 1e-9)
 
-    now_ts = int(time.time())
-    if now_ts - int(bot_state["last_action_ts"]) < BOT_COOLDOWN_SECONDS:
-        emit_bot_status("cooldown", f"Cooling down ({BOT_COOLDOWN_SECONDS}s window)")
-        return
+        now_ts = int(time.time())
+        if now_ts - int(pair_state["last_action_ts"]) < BOT_COOLDOWN_SECONDS:
+            continue
 
-    threshold = BOT_SIGNAL_BPS / 10000
-    action = None
-    if diff_ratio >= threshold and bot_state["position"] == "flat":
-        action = "buy"
-    elif diff_ratio <= -threshold and bot_state["position"] == "long":
-        action = "sell"
+        threshold = BOT_SIGNAL_BPS / 10000
+        action = None
+        if diff_ratio >= threshold and pair_state["position"] == "flat":
+            action = "buy"
+        elif diff_ratio <= -threshold and pair_state["position"] == "long":
+            action = "sell"
 
-    if action is None:
-        emit_bot_status("watching", f"No signal | short={short_ma:.2f} long={long_ma:.2f}")
-        return
+        if action is None:
+            emit_bot_status("watching", f"{pair} no signal | short={short_ma:.2f} long={long_ma:.2f}")
+            continue
 
-    amount = calculate_trade_amount(latest_price)
-    reason = f"MA signal short={short_ma:.2f}, long={long_ma:.2f}, diff={diff_ratio * 100:.3f}%"
+        amount = calculate_trade_amount(latest_price)
+        reason = f"{pair} MA signal short={short_ma:.2f}, long={long_ma:.2f}, diff={diff_ratio * 100:.3f}%"
 
-    try:
-        result = execute_trade(BOT_PAIR, action, amount, reason)
-        record_order_event(result, "bot")
-        socketio.emit("order_result", result)
-        if result.get("status") == "filled":
-            bot_state["position"] = "long" if action == "buy" else "flat"
-            bot_state["last_action_ts"] = now_ts
-            emit_bot_status("traded", f"{action.upper()} {amount} {BOT_PAIR} | {reason}")
-        else:
-            emit_bot_status("error", f"Trade error: {result.get('message', 'Unknown error')}")
-    except Exception as e:
-        failed = {"status": "error", "message": str(e), "reason": reason, "pair": BOT_PAIR, "side": action, "amount": amount}
-        record_order_event(failed, "bot")
-        socketio.emit("order_result", failed)
-        emit_bot_status("error", f"Trade exception: {e}")
+        try:
+            result = execute_trade(pair, action, amount, reason)
+            record_order_event(result, "bot")
+            socketio.emit("order_result", result)
+            if result.get("status") == "filled":
+                pair_state["position"] = "long" if action == "buy" else "flat"
+                pair_state["last_action_ts"] = now_ts
+                emit_bot_status("traded", f"{action.upper()} {amount} {pair} | {reason}")
+            else:
+                emit_bot_status("error", f"{pair} trade error: {result.get('message', 'Unknown error')}")
+        except Exception as e:
+            failed = {"status": "error", "message": str(e), "reason": reason, "pair": pair, "side": action, "amount": amount}
+            record_order_event(failed, "bot")
+            socketio.emit("order_result", failed)
+            emit_bot_status("error", f"{pair} trade exception: {e}")
 
 
 def stream_prices():
@@ -560,12 +569,39 @@ def get_order_history():
         except Exception as e:
             print(f"Order history fetch error (my_orders): {e}")
 
+        include_account_fills = env_bool("ORDER_HISTORY_INCLUDE_ACCOUNT_FILLS", True)
+        if include_account_fills:
+            markets = [item.strip().upper() for item in os.getenv("ORDER_HISTORY_MARKETS", "BTC,ETH,SOL").split(",") if item.strip()]
+
+            for symbol in markets:
+                try:
+                    payload = coinspot.orders_history(symbol.lower())
+                    if not isinstance(payload, dict):
+                        continue
+                    status = str(payload.get("status", "")).lower()
+                    if status and status != "ok":
+                        continue
+
+                    raw_orders = payload.get("orders")
+                    if not isinstance(raw_orders, list):
+                        continue
+
+                    fallback_market = f"{symbol}/AUD"
+                    for entry in raw_orders[:40]:
+                        if not isinstance(entry, dict):
+                            continue
+                        normalized = normalize_order_entry(entry, fallback_market=fallback_market)
+                        normalized["source"] = "coinspot-fill"
+                        orders.append(normalized)
+                except Exception as e:
+                    print(f"Order history fetch error (orders_history {symbol}): {e}")
+
     sorted_orders = sorted(orders, key=lambda item: item.get("sort_ts", 0), reverse=True)
     return jsonify({
         "success": True,
         "orders": sorted_orders[:40],
         "updated_at": utc_now_str(with_suffix=True),
-        "source_note": "Shows bot/manual order events plus your account open orders. Market-wide public trades are excluded.",
+        "source_note": "Shows bot/manual events, account open orders, and CoinSpot account fills (side may be unknown for some fills).",
     }), 200
 
 @app.route("/api/ask", methods=["POST"])
@@ -647,11 +683,14 @@ def handle_order(order_data: Dict[str, Any]):
         record_order_event(failed, "manual")
         emit("order_result", failed)
 
+
+# Start background stream at process startup (including Gunicorn/Render workers).
+ensure_background_stream_started()
+
 # -----------------------
 # Entrypoint
 # -----------------------
 if __name__ == "__main__":
-    ensure_background_stream_started()
     socketio.run(
         app,
         host="0.0.0.0",
